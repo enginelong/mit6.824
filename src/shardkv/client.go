@@ -36,13 +36,15 @@ func nrand() int64 {
 }
 
 type Clerk struct {
-	sm       *shardmaster.Clerk
-	config   shardmaster.Config
-	make_end func(string) *labrpc.ClientEnd
+	sm       *shardmaster.Clerk             // 通过它向shardmaster发起请求
+	config   shardmaster.Config             // client所知的配置
+	make_end func(string) *labrpc.ClientEnd // 将server name转换成clientEnd的函数
 	// You will have to modify this struct.
+	clientId   int64 // client的唯一标识符
+	commandNum int   // 标志client为每个command分配的序列号到哪了（采用自增，从1开始）
+
 }
 
-//
 // the tester calls MakeClerk.
 //
 // masters[] is needed to call shardmaster.MakeClerk().
@@ -50,14 +52,17 @@ type Clerk struct {
 // make_end(servername) turns a server name from a
 // Config.Groups[gid][i] into a labrpc.ClientEnd on which you can
 // send RPCs.
-//
 func MakeClerk(masters []*labrpc.ClientEnd, make_end func(string) *labrpc.ClientEnd) *Clerk {
 	ck := new(Clerk)
-	ck.sm = shardmaster.MakeClerk(masters)
+	ck.sm = shardmaster.MakeClerk(masters) // 关联shardmaster
 	ck.make_end = make_end
 	// You'll have to add code here.
+	ck.config = ck.sm.Query(-1) // 向shardmaster询问最新的配置
+	ck.clientId = nrand()
+	ck.commandNum = 1
 	return ck
 }
+
 
 //
 // fetch the current value for a key.
@@ -66,8 +71,11 @@ func MakeClerk(masters []*labrpc.ClientEnd, make_end func(string) *labrpc.Client
 // You will have to modify this function.
 //
 func (ck *Clerk) Get(key string) string {
-	args := GetArgs{}
-	args.Key = key
+	args := GetArgs{
+		Key:      key,
+		ClientId: ck.clientId,
+		CmdNum:   ck.commandNum,
+	}
 
 	for {
 		shard := key2shard(key)
@@ -79,7 +87,9 @@ func (ck *Clerk) Get(key string) string {
 				var reply GetReply
 				ok := srv.Call("ShardKV.Get", &args, &reply)
 				if ok && (reply.Err == OK || reply.Err == ErrNoKey) {
-					return reply.Value
+				        ck.commandNum++
+					DPrintf("Client[%d] get the [Get] response [key:%v, value:%v].\n", ck.clientId, key, reply.Value)
+                                	return reply.Value
 				}
 				if ok && (reply.Err == ErrWrongGroup) {
 					break
@@ -100,11 +110,13 @@ func (ck *Clerk) Get(key string) string {
 // You will have to modify this function.
 //
 func (ck *Clerk) PutAppend(key string, value string, op string) {
-	args := PutAppendArgs{}
-	args.Key = key
-	args.Value = value
-	args.Op = op
-
+	args := PutAppendArgs{
+		Key:      key,
+		Value:    value,
+		Op:       op,
+		ClientId: ck.clientId,
+		CmdNum:   ck.commandNum,
+	}
 
 	for {
 		shard := key2shard(key)
@@ -115,6 +127,8 @@ func (ck *Clerk) PutAppend(key string, value string, op string) {
 				var reply PutAppendReply
 				ok := srv.Call("ShardKV.PutAppend", &args, &reply)
 				if ok && reply.Err == OK {
+					ck.commandNum++
+					DPrintf("Client[%d] get the [PutAppend] response [key:%v, value:%v, type:%v].\n", ck.clientId, key, value, op)
 					return
 				}
 				if ok && reply.Err == ErrWrongGroup {

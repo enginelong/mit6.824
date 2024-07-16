@@ -1307,6 +1307,20 @@ func (rf *Raft) SetActiveSnapshottingFlag(flag bool) {
 	rf.activeSnapshotting = flag
 }
 
+ // 检查raft是否有当前term的日志
+ func (rf *Raft) CheckCurrentTermLog() bool {
+        rf.mu.Lock()
+        defer rf.mu.Unlock()
+  
+        latestLog := rf.log[len(rf.log)-1]
+        if rf.currentTerm == latestLog.Term {
+                return true
+        }
+  
+        return false
+}
+
+
 // 由kvserver调用修改rf.passiveSnapshotting
 func (rf *Raft) SetPassiveSnapshottingFlag(flag bool) {
 	rf.mu.Lock()
